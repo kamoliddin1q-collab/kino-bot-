@@ -7,7 +7,7 @@ TOKEN = "9093234322:AAG4l6jKf52a0r-nonnskT1RDOpyDS6l5LE"
 ADMIN_ID = 8823389094
 
 DB = "kino_luxury.db"
-PAYMENT_INFO = "💳 To'lovni amalga oshirish uchun adminga murojaat qiling va chekni yuboring."
+PAYMENT_INFO = "💳 **Karta raqami:** `9860 1606 3597 0363`\n👤 **Karta egasi:** G'aybulla Shahzoda\n\n📌 Pulni ushbu kartaga o'tkazib, chek rasmini shu yerga yuboring!"
 
 bot = telebot.TeleBot(TOKEN)
 states = {}
@@ -252,8 +252,7 @@ def buy(c):
         f"📦 Tarif: {label}\n"
         f"💰 Narxi: {amount:,} so'm\n"
         f"⏳ Muddati: {days} kun\n\n"
-        f"💳 {PAYMENT_INFO}\n\n"
-        "📸 To'lovni amalga oshirgach, chek rasmini shu yerga yuboring!",
+        f"{PAYMENT_INFO}",
         parse_mode="Markdown"
     )
     bot.answer_callback_query(c.id)
@@ -402,7 +401,7 @@ def broadcast_start(m):
     states[m.from_user.id] = ("broadcast",)
     bot.send_message(m.chat.id, "📨 Barcha foydalanuvchilarga yubormoqchi bo'lgan xabaringizni yozing:")
 
-@bot.message_handler(func=lambda m: m.text == "📢 KANALni O'ZGartirish 🔗")
+@bot.message_handler(func=lambda m: m.text == "📢 KANALNI O'ZGARTIRISH 🔗")
 def change_channel_start(m):
     if not is_admin(m.from_user.id):
         return
