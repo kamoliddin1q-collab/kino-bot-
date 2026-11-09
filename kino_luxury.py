@@ -1,6 +1,6 @@
-import telebot
-from telebot import types
-import sqlite3
+from flask import Flask
+import threading
+import os
 from datetime import datetime, timedelta
 
 TOKEN = "9093234322:AAG4l6jKf52a0r-nonnskT1RDOpyDS6l5LE"
@@ -510,11 +510,6 @@ def text_handler(m):
         bot.send_message(m.chat.id, "❌ Kechirasiz, bunday kino kodi topilmadi! To'g'ri kodni kiriting (masalan: 11) 🔍")
 
 setup()
-print("👑 KINO OLAMI PRO LUXURY (ADMIN KANAL BOSHQARUVI BILAN) ISHGA TUSHDI! 🚀")
-bot.infinity_polling(skip_pending=True)from flask import Flask
-import threading
-import os
-
 app = Flask('')
 
 @app.route('/')
@@ -526,9 +521,9 @@ def run_web():
     app.run(host='0.0.0.0', port=port)
 
 if __name__ == "__main__":
-    setup() # Agar setup funksiyangiz bo'lsa
+    setup()
     t = threading.Thread(target=run_web)
     t.start()
     print("👑 KINO OLAMI PRO LUXURY ISHGA TUSHDI! 🚀")
     bot.infinity_polling(skip_pending=True)
-
+    
