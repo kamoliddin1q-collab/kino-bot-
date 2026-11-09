@@ -511,7 +511,7 @@ def text_handler(m):
         bot.send_message(m.chat.id, "❌ Kechirasiz, bunday kino kodi topilmadi! To'g'ri kodni kiriting (masalan: 11) 🔍")
 
 setup()
-app = Flask('')
+app = Flask(__name__)
 
 @app.route('/')
 def home_web():
