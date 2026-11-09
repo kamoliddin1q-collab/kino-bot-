@@ -67,7 +67,7 @@ def check_channel_sub(user_id):
   cursor.execute("SELECT value FROM settings WHERE key = 'required_channel'")
   row = cursor.fetchone()
   if not row or not row[0]:
-    return True  # Kanal ulanmagan bo'lsa, o'tkazib yuboradi
+    return True
 
   channel = row[0]
   try:
@@ -109,7 +109,6 @@ def start(message):
   )
   conn.commit()
 
-  # Majburiy obunani tekshirish (Admin uchun majburiy emas)
   if not check_channel_sub(user_id) and user_id != ADMIN_ID:
     cursor.execute("SELECT value FROM settings WHERE key = 'required_channel'")
     channel = cursor.fetchone()[0]
@@ -136,20 +135,21 @@ def start(message):
   markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
   markup.add(
       types.KeyboardButton("🎬 Kino qidirish"),
-      types.KeyboardButton("🔥 Top Kinolar"),
+      types.KeyboardButton("📺 Seriallar"),
   )
   markup.add(
+      types.KeyboardButton("🔥 Top Kinolar"),
       types.KeyboardButton("💎 VIP / Pullik Kinolar"),
-      types.KeyboardButton("🎲 Tasodifiy kino"),
   )
+  markup.add(types.KeyboardButton("🎲 Tasodifiy kino"))
 
   if user_id == ADMIN_ID:
     markup.add(types.KeyboardButton("👑 Admin Panel"))
 
   welcome_text = (
       f"✨ Assalomu alaykum, {message.from_user.first_name}!\n\n"
-      "💎 VIP Kino va Premyeralar olamiga xush kelibsiz!\n"
-      "📥 Kino kodini yuboring yoki VIP kinolarni xarid qiling."
+      "💎 VIP Kino va Seriallar olamiga xush kelibsiz!\n"
+      "📥 Kino yoki serial kodini yuboring."
   )
   bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
 
@@ -164,6 +164,28 @@ def callback_check_sub(call):
     bot.answer_callback_query(
         call.id, "❌ Siz hali kanalga a'zo bo'lmadingiz!", show_alert=True
     )
+
+
+# --- SERIALLAR MENYUSI ---
+@bot.message_handler(func=lambda message: message.text == "📺 Seriallar")
+def series_menu(message):
+  cursor.execute("SELECT DISTINCT code, name FROM series")
+  all_series = cursor.fetchall()
+
+  if not all_series:
+    bot.send_message(
+        message.chat.id,
+        "📺 Hozircha bazada seriallar yo'q. Tez kunda yangi seriallar"
+        " qo'shiladi!",
+    )
+    return
+
+  text = "📺 Bazadagi mavjud seriallar ro'yxati:\n\n"
+  for s in all_series:
+    text += f"🎬 {s[1]} | 🆔 Kod: {s[0]}\n"
+  text += "\nKo'rmoqchi bo'lgan serialingiz kodini botga yuboring!"
+
+  bot.send_message(message.chat.id, text)
 
 
 # --- VIP KINOLAR MENYUSI ---
@@ -398,13 +420,21 @@ def del_movie(message):
   bot.send_message(message.chat.id, "🗑 O'chiriladigan kino kodini kiriting:")
 
 
+@bot.message_handler(
+    func=lambda message: message.text == "❌ Serialni o'chirish"
+    and message.from_user.id == ADMIN_ID
+)
+def del_series(message):
+  user_states[message.from_user.id] = {"step": "delete_series"}
+  bot.send_message(message.chat.id, "🗑 O'chiriladigan serial kodini kiriting:")
+
+
 # --- XABARLARNI QAYTA ISHLASH ---
 @bot.message_handler(content_types=["text", "video", "photo"])
 def handle_all_messages(message):
   user_id = message.from_user.id
   text = message.text if message.text else ""
 
-  # Kanal ulangan bo'lsa va oddiy foydalanuvchi bo'lsa obunani tekshiramiz
   if not check_channel_sub(user_id) and user_id != ADMIN_ID:
     bot.send_message(
         message.chat.id, "⚠️ Avval kanalimizga a'zo bo'ling va /start bosing!"
@@ -456,6 +486,13 @@ def handle_all_messages(message):
       cursor.execute("DELETE FROM vip_movies WHERE code = ?", (text,))
       conn.commit()
       bot.send_message(message.chat.id, f"🗑 {text} kodli kino o'chirildi! ✅")
+      user_states[user_id] = {}
+      return
+
+    elif step == "delete_series":
+      cursor.execute("DELETE FROM series WHERE code = ?", (text,))
+      conn.commit()
+      bot.send_message(message.chat.id, f"🗑 {text} kodli serial o'chirildi! ✅")
       user_states[user_id] = {}
       return
 
@@ -555,7 +592,7 @@ def handle_all_messages(message):
       user_states[user_id] = {}
       return
 
-  # Qidirish
+  # 1. ODDIY KINO QIDIRISH
   cursor.execute(
       "SELECT name, file_id, views FROM movies WHERE code = ?", (text,)
   )
@@ -569,6 +606,31 @@ def handle_all_messages(message):
     )
     return
 
+  # 2. SERIAL QIDIRISH
+  cursor.execute(
+      "SELECT episode, name FROM series WHERE code = ? ORDER BY episode ASC",
+      (text,),
+  )
+  episodes = cursor.fetchall()
+  if episodes:
+    series_name = episodes[0][1]
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    buttons = []
+    for ep in episodes:
+      buttons.add(
+          types.InlineKeyboardButton(
+              f"{ep[0]}-qism", callback_data=f"ep_{text}_{ep[0]}"
+          )
+      )
+    markup.add(*buttons)
+    bot.send_message(
+        message.chat.id,
+        f"📺 Serial: {series_name}\n\nQaysi qismini tomosha qilmoqchisiz?",
+        reply_markup=markup,
+    )
+    return
+
+  # 3. VIP KINO QIDIRISH
   cursor.execute(
       "SELECT name, file_id, price FROM vip_movies WHERE code = ?", (text,)
   )
@@ -582,7 +644,17 @@ def handle_all_messages(message):
     )
     return
 
-  bot.send_message(message.chat.id, "❌ Bunday kodli kino topilmadi. Qaytadan urinib ko'ring! 🔍")
+  if message.text == "🎬 Kino qidirish":
+    bot.send_message(
+        message.chat.id,
+        "🔍 Ko'rmoqchi bo'lgan kino yoki serialingizning kodini yuboring:",
+    )
+    return
+
+  bot.send_message(
+      message.chat.id,
+      "❌ Bunday kodli kino yoki serial topilmadi. Qaytadan urinib ko'ring! 🔍",
+  )
 
 
 # --- CALLBACK ---
@@ -605,12 +677,4 @@ def callback_episode(call):
         file_id,
         caption=f"📺 {name} ({episode_num}-qism)\n🍿 Maroqli tomosha!",
     )
-    bot.answer_callback_query(call.id)
-  else:
-    bot.answer_callback_query(call.id, "❌ Bu qism topilmadi!")
-
-
-# --- ISHGA TUSHIRISH ---
-print("VIP Biznes Kino Bot muvaffaqiyatli ishga tushdi...")
-bot.infinity_polling()
-      
+    bot.answer_callback_q
