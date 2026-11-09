@@ -511,4 +511,24 @@ def text_handler(m):
 
 setup()
 print("👑 KINO OLAMI PRO LUXURY (ADMIN KANAL BOSHQARUVI BILAN) ISHGA TUSHDI! 🚀")
-bot.infinity_polling(skip_pending=True)
+bot.infinity_polling(skip_pending=True)from flask import Flask
+import threading
+import os
+
+app = Flask('')
+
+@app.route('/')
+def home_web():
+    return "Bot online 24/7!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+if __name__ == "__main__":
+    setup() # Agar setup funksiyangiz bo'lsa
+    t = threading.Thread(target=run_web)
+    t.start()
+    print("👑 KINO OLAMI PRO LUXURY ISHGA TUSHDI! 🚀")
+    bot.infinity_polling(skip_pending=True)
+
