@@ -1,3 +1,4 @@
+from telebot import types
 import telebot
 from flask import Flask
 import threading
