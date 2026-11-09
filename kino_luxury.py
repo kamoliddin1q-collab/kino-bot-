@@ -1,5 +1,4 @@
-from datetime import datetime, timedelta
-import os
+from datetime import datetime
 import sqlite3
 import threading
 from flask import Flask
@@ -18,7 +17,6 @@ user_states = {}
 conn = sqlite3.connect(DB, check_same_thread=False)
 cursor = conn.cursor()
 
-# 1. Kinolar (Oddiy)
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS movies (
     code TEXT PRIMARY KEY,
@@ -28,7 +26,6 @@ CREATE TABLE IF NOT EXISTS movies (
 )
 """)
 
-# 2. VIP / Pullik kinolar
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS vip_movies (
     code TEXT PRIMARY KEY,
@@ -38,7 +35,6 @@ CREATE TABLE IF NOT EXISTS vip_movies (
 )
 """)
 
-# 3. Seriallar
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS series (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,7 +45,6 @@ CREATE TABLE IF NOT EXISTS series (
 )
 """)
 
-# 4. Foydalanuvchilar va ularning VIP statusi
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
@@ -58,30 +53,16 @@ CREATE TABLE IF NOT EXISTS users (
 )
 """)
 
-# 5. Sozlamalar (Kanal, karta va h.k.)
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
 )
 """)
+
+# ENG MUHIM QISM: Bazadagi kanal tekshiruvini majburiy o'chirib yuboramiz!
+cursor.execute("DELETE FROM settings WHERE key = 'required_channel'")
 conn.commit()
-
-
-# --- KANALNI TEKSHIRISH ---
-def check_channel_sub(user_id):
-  cursor.execute("SELECT value FROM settings WHERE key = 'required_channel'")
-  row = cursor.fetchone()
-  if not row or not row[0]:
-    return True
-  channel = row[0]
-  try:
-    member = bot.get_chat_member(channel, user_id)
-    if member.status in ["member", "administrator", "creator"]:
-      return True
-  except:
-    pass
-  return False
 
 
 # --- FLASK SERVER (24/7) ---
@@ -100,7 +81,7 @@ def run_flask():
 threading.Thread(target=run_flask).start()
 
 
-# --- START ---
+# --- START (HAMMA UCHUN 100% OCHIQ) ---
 @bot.message_handler(commands=["start"])
 def start(message):
   user_id = message.from_user.id
@@ -113,28 +94,6 @@ def start(message):
       (user_id, join_date),
   )
   conn.commit()
-
-  if not check_channel_sub(user_id):
-    cursor.execute("SELECT value FROM settings WHERE key = 'required_channel'")
-    channel = cursor.fetchone()[0]
-    markup = types.InlineKeyboardMarkup()
-    markup.add(
-        types.InlineKeyboardButton(
-            "📢 Kanalga a'zo bo'lish",
-            url=f"https://t.me/{channel.replace('@', '')}",
-        )
-    )
-    markup.add(
-        types.InlineKeyboardButton(
-            "✅ Obunani tekshirish", callback_data="check_sub"
-        )
-    )
-    bot.send_message(
-        message.chat.id,
-        "⚠️ Botdan foydalanish uchun kanalimizga a'zo bo'ling:",
-        reply_markup=markup,
-    )
-    return
 
   markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
   markup.add(
@@ -159,19 +118,7 @@ def start(message):
   )
 
 
-@bot.callback_query_handler(func=lambda call: call.data == "check_sub")
-def callback_check_sub(call):
-  if check_channel_sub(call.from_user.id):
-    bot.answer_callback_query(call.id, "Rahmat! Obuna tasdiqlandi ✅")
-    bot.delete_message(call.message.chat.id, call.message.message_id)
-    start(call.message)
-  else:
-    bot.answer_callback_query(
-        call.id, "❌ Siz hali kanalga a'zo bo'lmadingiz!", show_alert=True
-    )
-
-
-# --- VIP / PULLIK KINOLAR MENYusi ---
+# --- VIP / PULLIK KINOLAR MENYUSI ---
 @bot.message_handler(func=lambda message: message.text == "💎 VIP / Pullik Kinolar")
 def vip_movies_menu(message):
   cursor.execute("SELECT code, name, price FROM vip_movies")
@@ -213,9 +160,7 @@ def buy_vip_movie(call):
     return
 
   name, price = res
-  cursor.execute(
-      "SELECT value FROM settings WHERE key = 'card_number'"
-  )  # Admin kiritgan karta
+  cursor.execute("SELECT value FROM settings WHERE key = 'card_number'")
   card_row = cursor.fetchone()
   card_num = (
       card_row[0] if card_row and card_row[0] else "8600 *** *** *** (Admin karta)"
@@ -288,9 +233,7 @@ def admin_panel(message):
   markup.add(
       types.KeyboardButton("📊 Statistika"), types.KeyboardButton("💰 Daromad")
   )
-  markup.add(
-      types.KeyboardButton("📢 Reklama"), types.KeyboardButton("📢 Kanal ulash")
-  )
+  markup.add(types.KeyboardButton("📢 Reklama"))
   markup.add(types.KeyboardButton("🔙 Bosh menyu"))
 
   bot.send_message(
@@ -359,18 +302,6 @@ def set_card_start(message):
 
 
 @bot.message_handler(
-    func=lambda message: message.text == "📢 Kanal ulash"
-    and message.from_user.id == ADMIN_ID
-)
-def set_channel_start(message):
-  user_states[message.from_user.id] = {"step": "waiting_channel"}
-  bot.send_message(
-      message.chat.id,
-      "📢 Kanal usernamesini yuboring (masalan: `@kino_olami`):",
-  )
-
-
-@bot.message_handler(
     func=lambda message: message.text == "📢 Reklama"
     and message.from_user.id == ADMIN_ID
 )
@@ -421,10 +352,6 @@ def handle_all_messages(message):
   user_id = message.from_user.id
   text = message.text if message.text else ""
 
-  if not check_channel_sub(user_id) and user_id != ADMIN_ID:
-    bot.send_message(message.chat.id, "⚠️ Avval kanalga a'zo bo'ling va /start bosing!")
-    return
-
   if user_id == ADMIN_ID and user_id in user_states and user_states[user_id]:
     state = user_states[user_id]
     step = state.get("step")
@@ -437,17 +364,6 @@ def handle_all_messages(message):
       )
       conn.commit()
       bot.send_message(message.chat.id, f"✅ Karta raqami saqlandi: `{text}` ✅")
-      user_states[user_id] = {}
-      return
-
-    elif step == "waiting_channel":
-      cursor.execute(
-          "INSERT OR REPLACE INTO settings (key, value) VALUES ('required_channel',"
-          " ?)",
-          (text,),
-      )
-      conn.commit()
-      bot.send_message(message.chat.id, f"✅ Kanal ulandi: `{text}` ✅")
       user_states[user_id] = {}
       return
 
@@ -477,7 +393,7 @@ def handle_all_messages(message):
       user_states[user_id] = {}
       return
 
-    # VIP Kino qo'shish bosqichlari
+    # VIP Kino qo'shish
     elif step == "vip_code":
       state["code"] = text
       state["step"] = "vip_name"
@@ -581,7 +497,7 @@ def handle_all_messages(message):
       user_states[user_id] = {}
       return
 
-  # Foydalanuvchi chek tashlasa yoki kino kodini yuborsa
+  # Foydalanuvchilar uchun qidiruv
   cursor.execute(
       "SELECT name, file_id, views FROM movies WHERE code = ?", (text,)
   )
@@ -598,20 +514,18 @@ def handle_all_messages(message):
     )
     return
 
-  # Agar VIP kino kodini kiritgan bo'lsa
+  # VIP kino qidirish
   cursor.execute(
       "SELECT name, file_id, price FROM vip_movies WHERE code = ?", (text,)
-  )
+    )
   vip = cursor.fetchone()
   if vip:
     name, file_id, price = vip
-    # VIP kinoni ochish uchun user pullik statusini tekshiramiz yoki admin ruxsatini
     bot.send_video(
         message.chat.id,
         file_id,
         caption=(
-            f"💎 **Eksklyuziv VIP Kino:** {name}\n✨ Maroqli tomosha qilishingiz"
-            " uchun maxsus taqdim etildi!"
+            f"💎 **Eksklyuziv VIP Kino:** {name}\n✨ Maroqli tomosha qiling!"
         ),
         parse_mode="Markdown",
     )
@@ -619,9 +533,34 @@ def handle_all_messages(message):
 
   bot.send_message(
       message.chat.id,
-      "❌ Bunday kodli kino topilmadi yoki xato xabar yubordingiz. Qaytadan"
-      " urinib ko'ring! 🔍",
+      "❌ Bunday kodli kino topilmadi. Qaytadan urinib ko'ring! 🔍",
   )
+
+
+# --- CALLBACK ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith("ep_"))
+def callback_episode(call):
+  data_parts = call.data.split("_")
+  code = data_parts[1]
+  episode_num = data_parts[2]
+
+  cursor.execute(
+      "SELECT name, file_id FROM series WHERE code = ? AND episode = ?",
+      (code, episode_num),
+  )
+  res = cursor.fetchone()
+
+  if res:
+    name, file_id = res
+    bot.send_video(
+        call.message.chat.id,
+        file_id,
+        caption=f"📺 **{name}** (`{episode_num}-qism`)\n🍿 Maroqli tomosha!",
+        parse_mode="Markdown",
+    )
+    bot.answer_callback_query(call.id)
+  else:
+    bot.answer_callback_query(call.id, "❌ Bu qism topilmadi!")
 
 
 # --- ISHGA TUSHIRISH ---
