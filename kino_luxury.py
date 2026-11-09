@@ -18,21 +18,28 @@ user_states = {}
 conn = sqlite3.connect(DB, check_same_thread=False)
 cursor = conn.cursor()
 
-# 1. Kinolar jadvali
-cursor.execute(
-    """
+# 1. Kinolar (Oddiy)
+cursor.execute("""
 CREATE TABLE IF NOT EXISTS movies (
     code TEXT PRIMARY KEY,
     name TEXT,
     file_id TEXT,
     views INTEGER DEFAULT 0
 )
-"""
-)
+""")
 
-# 2. Seriallar jadvali
-cursor.execute(
-    """
+# 2. VIP / Pullik kinolar
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS vip_movies (
+    code TEXT PRIMARY KEY,
+    name TEXT,
+    price TEXT,
+    file_id TEXT
+)
+""")
+
+# 3. Seriallar
+cursor.execute("""
 CREATE TABLE IF NOT EXISTS series (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     code TEXT,
@@ -40,28 +47,50 @@ CREATE TABLE IF NOT EXISTS series (
     name TEXT,
     file_id TEXT
 )
-"""
-)
+""")
 
-# 3. Foydalanuvchilar jadvali
-cursor.execute(
-    """
+# 4. Foydalanuvchilar va ularning VIP statusi
+cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
-    joined_date TEXT
+    joined_date TEXT,
+    is_vip INTEGER DEFAULT 0
 )
-"""
+""")
+
+# 5. Sozlamalar (Kanal, karta va h.k.)
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
 )
+""")
 conn.commit()
 
 
-# --- FLASK SERVER (24/7 UptimeRobot uchun) ---
+# --- KANALNI TEKSHIRISH ---
+def check_channel_sub(user_id):
+  cursor.execute("SELECT value FROM settings WHERE key = 'required_channel'")
+  row = cursor.fetchone()
+  if not row or not row[0]:
+    return True
+  channel = row[0]
+  try:
+    member = bot.get_chat_member(channel, user_id)
+    if member.status in ["member", "administrator", "creator"]:
+      return True
+  except:
+    pass
+  return False
+
+
+# --- FLASK SERVER (24/7) ---
 app = Flask(__name__)
 
 
 @app.route("/")
 def home():
-  return "Professional Kino Bot 24/7 rejimida ishlamoqda! 🚀"
+  return "VIP Kino Biznes Bot 24/7 ishlamoqda! 🚀"
 
 
 def run_flask():
@@ -71,59 +100,150 @@ def run_flask():
 threading.Thread(target=run_flask).start()
 
 
-# --- START VA ASOSIY MENYU ---
+# --- START ---
 @bot.message_handler(commands=["start"])
 def start(message):
   user_id = message.from_user.id
-  join_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+  user_states[user_id] = {}
 
+  join_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
   cursor.execute(
-      "INSERT OR IGNORE INTO users (user_id, joined_date) VALUES (?, ?)",
+      "INSERT OR IGNORE INTO users (user_id, joined_date, is_vip) VALUES (?, ?,"
+      " 0)",
       (user_id, join_date),
   )
   conn.commit()
 
+  if not check_channel_sub(user_id):
+    cursor.execute("SELECT value FROM settings WHERE key = 'required_channel'")
+    channel = cursor.fetchone()[0]
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton(
+            "📢 Kanalga a'zo bo'lish",
+            url=f"https://t.me/{channel.replace('@', '')}",
+        )
+    )
+    markup.add(
+        types.InlineKeyboardButton(
+            "✅ Obunani tekshirish", callback_data="check_sub"
+        )
+    )
+    bot.send_message(
+        message.chat.id,
+        "⚠️ Botdan foydalanish uchun kanalimizga a'zo bo'ling:",
+        reply_markup=markup,
+    )
+    return
+
   markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-  btn_search = types.KeyboardButton("🎬 Kino qidirish")
-  btn_top = types.KeyboardButton("🔥 Top Kinolar")
-  btn_random = types.KeyboardButton("🎲 Tasodifiy kino")
-  markup.add(btn_search, btn_top, btn_random)
+  markup.add(
+      types.KeyboardButton("🎬 Kino qidirish"),
+      types.KeyboardButton("🔥 Top Kinolar"),
+  )
+  markup.add(
+      types.KeyboardButton("💎 VIP / Pullik Kinolar"),
+      types.KeyboardButton("🎲 Tasodifiy kino"),
+  )
 
   if user_id == ADMIN_ID:
-    btn_admin = types.KeyboardButton("👑 Admin Panel")
-    markup.add(btn_admin)
+    markup.add(types.KeyboardButton("👑 Admin Panel"))
 
   welcome_text = (
       f"✨ Assalomu alaykum, **{message.from_user.first_name}**!\n\n"
-      "💎 **VIP Kino olamimizga** xush kelibsiz! Eng sara kino va seriallarni "
-      "yuqori sifatda tomosha qiling.\n\n"
-      "📥 Kerakli kino yoki serial **kodini** yuboring (Masalan: `1`, `101`)"
+      "💎 **VIP Kino va Premyeralar olamiga** xush kelibsiz!\n"
+      "📥 Kino kodini yuboring yoki VIP kinolarni xarid qiling."
   )
   bot.send_message(
       message.chat.id, welcome_text, reply_markup=markup, parse_mode="Markdown"
   )
 
 
-# --- TOP KINOLAR VA TASODIFIY KINO ---
+@bot.callback_query_handler(func=lambda call: call.data == "check_sub")
+def callback_check_sub(call):
+  if check_channel_sub(call.from_user.id):
+    bot.answer_callback_query(call.id, "Rahmat! Obuna tasdiqlandi ✅")
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    start(call.message)
+  else:
+    bot.answer_callback_query(
+        call.id, "❌ Siz hali kanalga a'zo bo'lmadingiz!", show_alert=True
+    )
+
+
+# --- VIP / PULLIK KINOLAR MENYusi ---
+@bot.message_handler(func=lambda message: message.text == "💎 VIP / Pullik Kinolar")
+def vip_movies_menu(message):
+  cursor.execute("SELECT code, name, price FROM vip_movies")
+  vips = cursor.fetchall()
+
+  if not vips:
+    bot.send_message(
+        message.chat.id,
+        "💎 Hozircha pullik/VIP kinolar qo'shilmagan. Tez kunda yangi"
+        " premyeralar qo'shiladi!",
+    )
+    return
+
+  markup = types.InlineKeyboardMarkup(row_width=1)
+  for v in vips:
+    markup.add(
+        types.InlineKeyboardButton(
+            f"🎬 {v[1]} — 💰 {v[2]}", callback_data=f"buy_vip_{v[0]}"
+        )
+    )
+
+  bot.send_message(
+      message.chat.id,
+      "💎 **Eksklyuziv VIP va Premyera kinolar ro'yxati:**\nKo'rmoqchi bo'lgan"
+      " kinongizni tanlang va xarid qiling:",
+      reply_markup=markup,
+      parse_mode="Markdown",
+  )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("buy_vip_"))
+def buy_vip_movie(call):
+  code = call.data.split("_")[2]
+  cursor.execute("SELECT name, price FROM vip_movies WHERE code = ?", (code,))
+  res = cursor.fetchone()
+
+  if not res:
+    bot.answer_callback_query(call.id, "❌ Kino topilmadi!")
+    return
+
+  name, price = res
+  cursor.execute(
+      "SELECT value FROM settings WHERE key = 'card_number'"
+  )  # Admin kiritgan karta
+  card_row = cursor.fetchone()
+  card_num = (
+      card_row[0] if card_row and card_row[0] else "8600 *** *** *** (Admin karta)"
+  )
+
+  text = (
+      f"💳 **Kino xarid qilish:**\n\n🎬 Kino: **{name}**\n💰 Narxi:"
+      f" `{price}`\n\n💳 **To'lov uchun karta:**\n`{card_num}`\n👤 Karta egasi:"
+      " Admin\n\n⚠️ Pulni o'tkazgandan so'ng, to'lov chegini (skrinshot) shu botga"
+      " yuboring va ustiga *'{code} kodli kino uchun'* deb yozib qo'ying!"
+  )
+  bot.send_message(call.message.chat.id, text, parse_mode="Markdown")
+  bot.answer_callback_query(call.id)
+
+
+# --- TOP KINOLAR VA TASODIFIY ---
 @bot.message_handler(func=lambda message: message.text == "🔥 Top Kinolar")
 def top_movies(message):
   cursor.execute(
       "SELECT code, name, views FROM movies ORDER BY views DESC LIMIT 5"
   )
   movies = cursor.fetchall()
-
   if not movies:
-    bot.send_message(
-        message.chat.id,
-        "⚠️ Hozircha bazada ommabop kinolar yo'q.",
-        parse_mode="Markdown",
-    )
+    bot.send_message(message.chat.id, "⚠️ Hozircha bazada kinolar yo'q.")
     return
-
-  text = "🔥 **Eng ko'p ko'rilgan TOP kinolar:**\n\n"
+  text = "🔥 **TOP Kinolar:**\n\n"
   for idx, m in enumerate(movies, 1):
-    text += f"{idx}. **{m[1]}** | 🆔 Kod: `{m[0]}` | 👀 Ko'rishlar: `{m[2]}`\n"
-
+    text += f"{idx}. **{m[1]}** | 🆔 Kod: `{m[0]}` | 👀 {m[2]} marta\n"
   bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
 
@@ -131,26 +251,16 @@ def top_movies(message):
 def random_movie(message):
   cursor.execute("SELECT code, name, file_id FROM movies ORDER BY RANDOM() LIMIT 1")
   movie = cursor.fetchone()
-
   if not movie:
-    bot.send_message(
-        message.chat.id,
-        "⚠️ Hozircha bazada kinolar mavjud emas.",
-        parse_mode="Markdown",
-    )
+    bot.send_message(message.chat.id, "⚠️ Kinolar mavjud emas.")
     return
-
   code, name, file_id = movie
   cursor.execute("UPDATE movies SET views = views + 1 WHERE code = ?", (code,))
   conn.commit()
-
   bot.send_video(
       message.chat.id,
       file_id,
-      caption=(
-          f"🎲 **Tasodifiy tanlangan kino:**\n\n🎬 **{name}**\n🆔 Kod: `{code}`\n\n🍿"
-          f" Maroqli hordiq tilaymiz! ✨\n🤖 Bot: @{bot.get_me().username}"
-      ),
+      caption=f"🎲 **{name}**\n🆔 Kod: `{code}`",
       parse_mode="Markdown",
   )
 
@@ -161,23 +271,31 @@ def random_movie(message):
     and message.from_user.id == ADMIN_ID
 )
 def admin_panel(message):
+  user_states[message.from_user.id] = {}
   markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
   markup.add(
       types.KeyboardButton("➕ Kino qo'shish"),
+      types.KeyboardButton("💎 VIP Kino qo'shish"),
+  )
+  markup.add(
       types.KeyboardButton("➕ Serial qo'shish"),
+      types.KeyboardButton("💳 Karta kiritish"),
   )
   markup.add(
       types.KeyboardButton("🗑 Kinoni o'chirish"),
       types.KeyboardButton("❌ Serialni o'chirish"),
   )
   markup.add(
-      types.KeyboardButton("📊 Statistika"), types.KeyboardButton("📢 Reklama")
+      types.KeyboardButton("📊 Statistika"), types.KeyboardButton("💰 Daromad")
+  )
+  markup.add(
+      types.KeyboardButton("📢 Reklama"), types.KeyboardButton("📢 Kanal ulash")
   )
   markup.add(types.KeyboardButton("🔙 Bosh menyu"))
 
   bot.send_message(
       message.chat.id,
-      "👑 **Professional Admin Boshqaruv Paneliga** xush kelibsiz:",
+      "👑 **Biznes Admin Boshqaruv Paneli:**",
       reply_markup=markup,
       parse_mode="Markdown",
   )
@@ -191,88 +309,92 @@ def back_to_main(message):
   start(message)
 
 
-# --- STATISTIKA ---
+# --- STATISTIKA VA DAROMAD ---
 @bot.message_handler(
     func=lambda message: message.text == "📊 Statistika"
     and message.from_user.id == ADMIN_ID
 )
 def statistics(message):
   cursor.execute("SELECT COUNT(*) FROM users")
-  users_count = cursor.fetchone()[0]
-
+  users = cursor.fetchone()[0]
   cursor.execute("SELECT COUNT(*) FROM movies")
-  movies_count = cursor.fetchone()[0]
-
-  cursor.execute("SELECT COUNT(DISTINCT code) FROM series")
-  series_count = cursor.fetchone()[0]
-
+  movies = cursor.fetchone()[0]
+  cursor.execute("SELECT COUNT(*) FROM vip_movies")
+  vips = cursor.fetchone()[0]
   cursor.execute("SELECT SUM(views) FROM movies")
-  total_views = cursor.fetchone()[0] or 0
+  views = cursor.fetchone()[0] or 0
 
-  stats_text = (
-      f"📊 **Botning To'liq Statistikasi:**\n\n"
-      f"👤 Jami obunachilar: `{users_count}` ta\n"
-      f"🎬 Kinolar soni: `{movies_count}` ta\n"
-      f"📺 Seriallar soni: `{series_count}` ta\n"
-      f"👀 Kinolar ko'rilishi: `{total_views}` marta"
+  bot.send_message(
+      message.chat.id,
+      f"📊 **Statistika:**\n\n👤 Obunachilar: `{users}`\n🎬 Oddiy kinolar:"
+      f" `{movies}`\n💎 VIP kinolar: `{vips}`\n👀 Jami ko'rishlar: `{views}`",
+      parse_mode="Markdown",
   )
-  bot.send_message(message.chat.id, stats_text, parse_mode="Markdown")
 
 
-# --- REKLAMA TARQATISH ---
+@bot.message_handler(
+    func=lambda message: message.text == "💰 Daromad"
+    and message.from_user.id == ADMIN_ID
+)
+def revenue_panel(message):
+  cursor.execute("SELECT COUNT(*) FROM users")
+  users = cursor.fetchone()[0]
+  bot.send_message(
+      message.chat.id,
+      f"💰 **Daromad bo'limi:**\n\n👥 Jami foydalanuvchilar: `{users}` ta\n💡 VIP"
+      " kinolar savdosi va reklamalardan tushadigan mablag'ni kartangiz"
+      " orqali nazorat qilasiz.",
+      parse_mode="Markdown",
+  )
+
+
+# --- ADMIN BUYRUQLARI ---
+@bot.message_handler(
+    func=lambda message: message.text == "💳 Karta kiritish"
+    and message.from_user.id == ADMIN_ID
+)
+def set_card_start(message):
+  user_states[message.from_user.id] = {"step": "waiting_card"}
+  bot.send_message(message.chat.id, "💳 To'lov uchun karta raqamini yuboring:")
+
+
+@bot.message_handler(
+    func=lambda message: message.text == "📢 Kanal ulash"
+    and message.from_user.id == ADMIN_ID
+)
+def set_channel_start(message):
+  user_states[message.from_user.id] = {"step": "waiting_channel"}
+  bot.send_message(
+      message.chat.id,
+      "📢 Kanal usernamesini yuboring (masalan: `@kino_olami`):",
+  )
+
+
 @bot.message_handler(
     func=lambda message: message.text == "📢 Reklama"
     and message.from_user.id == ADMIN_ID
 )
 def broadcast_start(message):
   user_states[message.from_user.id] = {"step": "waiting_broadcast"}
-  bot.send_message(
-      message.chat.id,
-      "📢 Barcha foydalanuvchilarga yubormoqchi bo'lgan reklama xabaringizni"
-      " (matn, rasm yoki video) yuboring:",
-  )
+  bot.send_message(message.chat.id, "📢 Reklama xabarini yuboring:")
 
 
-# --- O'CHIRISH BUYRUQLARI ---
-@bot.message_handler(
-    func=lambda message: message.text == "🗑 Kinoni o'chirish"
-    and message.from_user.id == ADMIN_ID
-)
-def delete_movie_start(message):
-  user_states[message.from_user.id] = {"step": "delete_movie_code"}
-  bot.send_message(
-      message.chat.id,
-      "🗑 O'chirmoqchi bo'lgan kino kodini kiriting (masalan: `1`):",
-      parse_mode="Markdown",
-  )
-
-
-@bot.message_handler(
-    func=lambda message: message.text == "❌ Serialni o'chirish"
-    and message.from_user.id == ADMIN_ID
-)
-def delete_series_start(message):
-  user_states[message.from_user.id] = {"step": "delete_series_code"}
-  bot.send_message(
-      message.chat.id,
-      "❌ Barcha qismlari bilan o'chirmoqchi bo'lgan serial kodini kiriting"
-      " (masalan: `10`):",
-      parse_mode="Markdown",
-  )
-
-
-# --- KINO VA SERIAL QO'SHISH BOSQICHLARI ---
 @bot.message_handler(
     func=lambda message: message.text == "➕ Kino qo'shish"
     and message.from_user.id == ADMIN_ID
 )
 def add_movie_start(message):
   user_states[message.from_user.id] = {"step": "movie_code"}
-  bot.send_message(
-      message.chat.id,
-      "🎬 Kino uchun unikal kod kiriting (masalan: `1`):",
-      parse_mode="Markdown",
-  )
+  bot.send_message(message.chat.id, "🎬 Kino uchun unikal kod kiriting:")
+
+
+@bot.message_handler(
+    func=lambda message: message.text == "💎 VIP Kino qo'shish"
+    and message.from_user.id == ADMIN_ID
+)
+def add_vip_start(message):
+  user_states[message.from_user.id] = {"step": "vip_code"}
+  bot.send_message(message.chat.id, "💎 VIP kino uchun kod kiriting:")
 
 
 @bot.message_handler(
@@ -281,93 +403,130 @@ def add_movie_start(message):
 )
 def add_series_start(message):
   user_states[message.from_user.id] = {"step": "series_code"}
-  bot.send_message(
-      message.chat.id,
-      "📺 Serial uchun kod kiriting (masalan: `10`):",
-      parse_mode="Markdown",
-  )
+  bot.send_message(message.chat.id, "📺 Serial uchun kod kiriting:")
 
 
-# --- XABARLARNI QAYTA ISHLASH (ADMIN VA FOYDALANUVCHI) ---
+@bot.message_handler(
+    func=lambda message: message.text == "🗑 Kinoni o'chirish"
+    and message.from_user.id == ADMIN_ID
+)
+def del_movie(message):
+  user_states[message.from_user.id] = {"step": "delete_movie"}
+  bot.send_message(message.chat.id, "🗑 O'chiriladigan kino kodini kiriting:")
+
+
+# --- XABARLARNI QAYTA ISHLASH ---
 @bot.message_handler(content_types=["text", "video", "photo"])
 def handle_all_messages(message):
   user_id = message.from_user.id
+  text = message.text if message.text else ""
 
-  # 1. Reklama yuborish jarayoni
-  if user_id == ADMIN_ID and user_states.get(user_id, {}).get(
-      "step"
-  ) == "waiting_broadcast":
-    cursor.execute("SELECT user_id FROM users")
-    users = cursor.fetchall()
-    success = 0
-    for u in users:
-      try:
-        bot.copy_message(u[0], message.chat.id, message.message_id)
-        success += 1
-      except:
-        pass
-    bot.send_message(
-        message.chat.id,
-        f"✅ Reklama muvaffaqiyatli `{success}` ta foydalanuvchiga yetkazildi! 🚀",
-        parse_mode="Markdown",
-    )
-    user_states[user_id] = {}
+  if not check_channel_sub(user_id) and user_id != ADMIN_ID:
+    bot.send_message(message.chat.id, "⚠️ Avval kanalga a'zo bo'ling va /start bosing!")
     return
 
-  # 2. Admin boshqaruv amallari
-  if user_id == ADMIN_ID and user_id in user_states:
+  if user_id == ADMIN_ID and user_id in user_states and user_states[user_id]:
     state = user_states[user_id]
+    step = state.get("step")
 
-    # Kinoni o'chirish
-    if state["step"] == "delete_movie_code":
-      code = message.text
-      cursor.execute("DELETE FROM movies WHERE code = ?", (code,))
+    if step == "waiting_card":
+      cursor.execute(
+          "INSERT OR REPLACE INTO settings (key, value) VALUES ('card_number',"
+          " ?)",
+          (text,),
+      )
       conn.commit()
+      bot.send_message(message.chat.id, f"✅ Karta raqami saqlandi: `{text}` ✅")
+      user_states[user_id] = {}
+      return
+
+    elif step == "waiting_channel":
+      cursor.execute(
+          "INSERT OR REPLACE INTO settings (key, value) VALUES ('required_channel',"
+          " ?)",
+          (text,),
+      )
+      conn.commit()
+      bot.send_message(message.chat.id, f"✅ Kanal ulandi: `{text}` ✅")
+      user_states[user_id] = {}
+      return
+
+    elif step == "waiting_broadcast":
+      cursor.execute("SELECT user_id FROM users")
+      users = cursor.fetchall()
+      success = 0
+      for u in users:
+        try:
+          bot.copy_message(u[0], message.chat.id, message.message_id)
+          success += 1
+        except:
+          pass
       bot.send_message(
-          message.chat.id,
-          f"🗑 `{code}` kodli kino bazadan muvaffaqiyatli o'chirildi! ✅",
-          parse_mode="Markdown",
+          message.chat.id, f"✅ Reklama `{success}` kishiga yuborildi!"
       )
       user_states[user_id] = {}
       return
 
-    # Serialni o'chirish
-    elif state["step"] == "delete_series_code":
-      code = message.text
-      cursor.execute("DELETE FROM series WHERE code = ?", (code,))
+    elif step == "delete_movie":
+      cursor.execute("DELETE FROM movies WHERE code = ?", (text,))
+      cursor.execute("DELETE FROM vip_movies WHERE code = ?", (text,))
       conn.commit()
       bot.send_message(
-          message.chat.id,
-          f"❌ `{code}` kodli serial va uning barcha qismlari o'chirildi! ✅",
-          parse_mode="Markdown",
+          message.chat.id, f"🗑 `{text}` kodli kino o'chirildi! ✅"
       )
       user_states[user_id] = {}
       return
 
-    # Kino qo'shish: Kod
-    elif state["step"] == "movie_code":
-      state["code"] = message.text
+    # VIP Kino qo'shish bosqichlari
+    elif step == "vip_code":
+      state["code"] = text
+      state["step"] = "vip_name"
+      bot.send_message(message.chat.id, "📝 VIP kino nomini yuboring:")
+      return
+    elif step == "vip_name":
+      state["name"] = text
+      state["step"] = "vip_price"
+      bot.send_message(
+          message.chat.id, "💰 Kino narxini yuboring (masalan: `10000 so'm`):"
+      )
+      return
+    elif step == "vip_price":
+      state["price"] = text
+      state["step"] = "vip_video"
+      bot.send_message(message.chat.id, "🎥 VIP kino videosini yuboring:")
+      return
+    elif step == "vip_video":
+      if not message.video:
+        bot.send_message(message.chat.id, "❌ Iltimos, video yuboring:")
+        return
+      file_id = message.video.file_id
+      cursor.execute(
+          "INSERT OR REPLACE INTO vip_movies (code, name, price, file_id)"
+          " VALUES (?, ?, ?, ?)",
+          (state["code"], state["name"], state["price"], file_id),
+      )
+      conn.commit()
+      bot.send_message(
+          message.chat.id,
+          f"💎 VIP kino bazaga qo'shildi! Kod: `{state['code']}`",
+      )
+      user_states[user_id] = {}
+      return
+
+    # Oddiy kino qo'shish
+    elif step == "movie_code":
+      state["code"] = text
       state["step"] = "movie_name"
       bot.send_message(message.chat.id, "📝 Kino nomini yuboring:")
       return
-
-    # Kino qo'shish: Nomi
-    elif state["step"] == "movie_name":
-      state["name"] = message.text
+    elif step == "movie_name":
+      state["name"] = text
       state["step"] = "movie_video"
-      bot.send_message(
-          message.chat.id,
-          "🎥 Kino videosini yuboring (poster talab qilinmaydi):",
-      )
+      bot.send_message(message.chat.id, "🎥 Kino videosini yuboring:")
       return
-
-    # Kino qo'shish: Video
-    elif state["step"] == "movie_video":
+    elif step == "movie_video":
       if not message.video:
-        bot.send_message(
-            message.chat.id,
-            "❌ Xatolik! Iltimos, video fayl yuboring. Qaytadan urinib ko'ring:",
-        )
+        bot.send_message(message.chat.id, "❌ Video fayl yuboring:")
         return
       file_id = message.video.file_id
       cursor.execute(
@@ -377,52 +536,36 @@ def handle_all_messages(message):
       )
       conn.commit()
       bot.send_message(
-          message.chat.id,
-          f"🔥 Kino muvaffaqiyatli bazaga qo'shildi!\n🆔 Kodi: `{state['code']}`",
-          parse_mode="Markdown",
+          message.chat.id, f"🔥 Kino qo'shildi! Kod: `{state['code']}`"
       )
       user_states[user_id] = {}
       return
 
-    # Serial qo'shish: Kod
-    elif state["step"] == "series_code":
-      state["code"] = message.text
+    # Serial qo'shish
+    elif step == "series_code":
+      state["code"] = text
       state["step"] = "series_name"
       bot.send_message(message.chat.id, "📝 Serial nomini yuboring:")
       return
-
-    # Serial qo'shish: Nomi
-    elif state["step"] == "series_name":
-      state["name"] = message.text
+    elif step == "series_name":
+      state["name"] = text
       state["step"] = "series_episode"
-      bot.send_message(
-          message.chat.id, "🔢 Serial qism raqamini kiriting (masalan: 1):"
-      )
+      bot.send_message(message.chat.id, "🔢 Qism raqamini yuboring:")
       return
-
-    # Serial qo'shish: Qism raqami
-    elif state["step"] == "series_episode":
+    elif step == "series_episode":
       try:
-        state["episode"] = int(message.text)
-      except ValueError:
-        bot.send_message(
-            message.chat.id,
-            "❌ Faqat raqam kiriting! Qism raqamini qaytadan yuboring:",
-        )
+        state["episode"] = int(text)
+      except:
+        bot.send_message(message.chat.id, "❌ Faqat raqam yuboring:")
         return
       state["step"] = "series_video"
       bot.send_message(
-          message.chat.id, f"🎥 Serialning {state['episode']}-qism videosini yuboring:"
+          message.chat.id, f"🎥 {state['episode']}-qism videosini yuboring:"
       )
       return
-
-    # Serial qo'shish: Video
-    elif state["step"] == "series_video":
+    elif step == "series_video":
       if not message.video:
-        bot.send_message(
-            message.chat.id,
-            "❌ Xatolik! Iltimos, video fayl yuboring. Qaytadan yuboring:",
-        )
+        bot.send_message(message.chat.id, "❌ Video fayl yuboring:")
         return
       file_id = message.video.file_id
       cursor.execute(
@@ -433,110 +576,54 @@ def handle_all_messages(message):
       conn.commit()
       bot.send_message(
           message.chat.id,
-          f"🔥 Serial qismi qo'shildi!\n🆔 Kod: `{state['code']}` | 📌 Qism:"
-          f" `{state['episode']}-qism`",
-          parse_mode="Markdown",
+          f"🔥 Serial qismi qo'shildi! Kod: `{state['code']}`",
       )
       user_states[user_id] = {}
       return
 
-  # 3. Odatiy foydalanuvchi qidiruvi
-  text = message.text
-  if text == "🎬 Kino qidirish":
-    bot.send_message(
-        message.chat.id,
-        "✨ Marhamat, ko'rmoqchi bo'lgan kino yoki serial kodini yuboring:",
-    )
-    return
-
-  # Kinoni qidirish
+  # Foydalanuvchi chek tashlasa yoki kino kodini yuborsa
   cursor.execute(
       "SELECT name, file_id, views FROM movies WHERE code = ?", (text,)
   )
   movie = cursor.fetchone()
-
   if movie:
     name, file_id, views = movie
     cursor.execute("UPDATE movies SET views = views + 1 WHERE code = ?", (text,))
     conn.commit()
-
     bot.send_video(
         message.chat.id,
         file_id,
-        caption=(
-            f"🎬 **{name}**\n\n👀 Ko'rishlar soni: `{views + 1}` marta\n🍿 Maroqli"
-            f" tomosha tilaymiz! ✨\n🤖 Bot manzili: @{bot.get_me().username}"
-        ),
+        caption=f"🎬 **{name}**\n👀 Ko'rishlar: `{views + 1}`",
         parse_mode="Markdown",
     )
     return
 
-  # Serialni qidirish
+  # Agar VIP kino kodini kiritgan bo'lsa
   cursor.execute(
-      "SELECT episode FROM series WHERE code = ? ORDER BY episode ASC", (text,)
+      "SELECT name, file_id, price FROM vip_movies WHERE code = ?", (text,)
   )
-  episodes = cursor.fetchall()
-
-  if episodes:
-    cursor.execute("SELECT name FROM series WHERE code = ?", (text,))
-    series_name = cursor.fetchone()[0]
-
-    markup = types.InlineKeyboardMarkup(row_width=4)
-    buttons = []
-    for ep in episodes:
-      ep_num = ep[0]
-      buttons.append(
-          types.InlineKeyboardButton(
-              f"✨ {ep_num}-qism", callback_data=f"ep_{text}_{ep_num}"
-          )
-      )
-    markup.add(*buttons)
-
-    bot.send_message(
+  vip = cursor.fetchone()
+  if vip:
+    name, file_id, price = vip
+    # VIP kinoni ochish uchun user pullik statusini tekshiramiz yoki admin ruxsatini
+    bot.send_video(
         message.chat.id,
-        f"📺 **{series_name}**\n\n💎 Kerakli qismni tanlang:",
-        reply_markup=markup,
+        file_id,
+        caption=(
+            f"💎 **Eksklyuziv VIP Kino:** {name}\n✨ Maroqli tomosha qilishingiz"
+            " uchun maxsus taqdim etildi!"
+        ),
         parse_mode="Markdown",
     )
     return
 
   bot.send_message(
       message.chat.id,
-      "❌ Kechirasiz, bunday kodli kino yoki serial topilmadi. Boshqa kod"
-      " yuborib ko'ring! 🔍",
+      "❌ Bunday kodli kino topilmadi yoki xato xabar yubordingiz. Qaytadan"
+      " urinib ko'ring! 🔍",
   )
 
 
-# --- SERIAL QISMLARINI TANLASH (CALLBACK) ---
-@bot.callback_query_handler(func=lambda call: call.data.startswith("ep_"))
-def callback_episode(call):
-  data_parts = call.data.split("_")
-  code = data_parts[1]
-  episode_num = data_parts[2]
-
-  cursor.execute(
-      "SELECT name, file_id FROM series WHERE code = ? AND episode = ?",
-      (code, episode_num),
-  )
-  res = cursor.fetchone()
-
-  if res:
-    name, file_id = res
-    bot.send_video(
-        call.message.chat.id,
-        file_id,
-        caption=(
-            f"📺 **{name}** (`{episode_num}-qism`)\n\n🍿 Maroqli tomosha! ✨\n🤖"
-            f" Bot: @{bot.get_me().username}"
-        ),
-        parse_mode="Markdown",
-    )
-    bot.answer_callback_query(call.id)
-  else:
-    bot.answer_callback_query(call.id, "❌ Bu qism topilmadi!")
-
-
-# --- BOTNI ISHGA TUSHIRISH ---
-print("Professional VIP Kino Bot muvaffaqiyatli ishga tushdi...")
+# --- ISHGA TUSHIRISH ---
+print("VIP Biznes Kino Bot muvaffaqiyatli ishga tushdi...")
 bot.infinity_polling()
-    
