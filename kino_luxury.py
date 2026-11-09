@@ -7,8 +7,8 @@ import telebot
 from telebot import types
 
 # --- ASOSIY SOZLAMALAR ---
-TOKEN = "9093234322:AAG416jKf52a0r-nonns..."  # Bot tokeningni yozasan
-ADMIN_ID = 8823389094  # Sening Telegram ID raqaming
+TOKEN = "9093234322:AAG4l6jKf52a0r-nonnskT1RDOpyDS6l5LE"
+ADMIN_ID = 8823389094
 DB = "kino_professional.db"
 
 bot = telebot.TeleBot(TOKEN)
