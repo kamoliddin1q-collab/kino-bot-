@@ -10,7 +10,7 @@ ADMIN_ID = 8823389094
 DB = "kino_luxury.db"
 PAYMENT_INFO = "💳 **Karta raqami:** `9860 1606 3597 0363`\n👤 **Karta egasi:** G'aybulla Shahzoda\n\n📌 Pulni ushbu kartaga o'tkazib, chek rasmini shu yerga yuboring!"
 
-bot = telebot.TeleBot(TOKEN)
+bot = telebot.TeleBot(9093234322:AAG4l6jKf52a0r-nonnskT1RDOpyDS6l5LE)
 states = {}
 
 PLANS = {
