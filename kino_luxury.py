@@ -13,7 +13,7 @@ DB = "kino_professional.db"
 bot = telebot.TeleBot(TOKEN)
 user_states = {}
 
-# --- BAZANI YARATish ---
+# --- BAZANI YARATISH ---
 conn = sqlite3.connect(DB, check_same_thread=False)
 cursor = conn.cursor()
 
@@ -59,9 +59,24 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT
 )
 """)
-
-cursor.execute("DELETE FROM settings WHERE key = 'required_channel'")
 conn.commit()
+
+
+# --- KANALNI TEKSHIRISH FUNKSIYASI ---
+def check_channel_sub(user_id):
+  cursor.execute("SELECT value FROM settings WHERE key = 'required_channel'")
+  row = cursor.fetchone()
+  if not row or not row[0]:
+    return True  # Kanal ulanmagan bo'lsa, o'tkazib yuboradi
+
+  channel = row[0]
+  try:
+    member = bot.get_chat_member(channel, user_id)
+    if member.status in ["member", "administrator", "creator"]:
+      return True
+  except:
+    pass
+  return False
 
 
 # --- FLASK SERVER (24/7) ---
@@ -94,6 +109,30 @@ def start(message):
   )
   conn.commit()
 
+  # Majburiy obunani tekshirish (Admin uchun majburiy emas)
+  if not check_channel_sub(user_id) and user_id != ADMIN_ID:
+    cursor.execute("SELECT value FROM settings WHERE key = 'required_channel'")
+    channel = cursor.fetchone()[0]
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton(
+            "📢 Kanalga a'zo bo'lish",
+            url=f"https://t.me/{channel.replace('@', '')}",
+        )
+    )
+    markup.add(
+        types.InlineKeyboardButton(
+            "✅ Obunani tekshirish", callback_data="check_sub"
+        )
+    )
+    bot.send_message(
+        message.chat.id,
+        "⚠️ Botdan foydalanish uchun quyidagi kanalimizga a'zo bo'lishingiz"
+        " kerak:",
+        reply_markup=markup,
+    )
+    return
+
   markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
   markup.add(
       types.KeyboardButton("🎬 Kino qidirish"),
@@ -113,6 +152,18 @@ def start(message):
       "📥 Kino kodini yuboring yoki VIP kinolarni xarid qiling."
   )
   bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "check_sub")
+def callback_check_sub(call):
+  if check_channel_sub(call.from_user.id):
+    bot.answer_callback_query(call.id, "Rahmat! Obuna tasdiqlandi ✅")
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    start(call.message)
+  else:
+    bot.answer_callback_query(
+        call.id, "❌ Siz hali kanalga a'zo bo'lmadingiz!", show_alert=True
+    )
 
 
 # --- VIP KINOLAR MENYUSI ---
@@ -224,7 +275,9 @@ def admin_panel(message):
   markup.add(
       types.KeyboardButton("📊 Statistika"), types.KeyboardButton("💰 Daromad")
   )
-  markup.add(types.KeyboardButton("📢 Reklama"))
+  markup.add(
+      types.KeyboardButton("📢 Reklama"), types.KeyboardButton("📢 Kanal ulash")
+  )
   markup.add(types.KeyboardButton("🔙 Bosh menyu"))
 
   bot.send_message(
@@ -288,6 +341,19 @@ def set_card_start(message):
 
 
 @bot.message_handler(
+    func=lambda message: message.text == "📢 Kanal ulash"
+    and message.from_user.id == ADMIN_ID
+)
+def set_channel_start(message):
+  user_states[message.from_user.id] = {"step": "waiting_channel"}
+  bot.send_message(
+      message.chat.id,
+      "📢 Majburiy obuna uchun kanal usernamesini yuboring (masalan:"
+      " @kino_olami):\nEslatma: Bot o'sha kanalda admin bo'lishi shart!",
+  )
+
+
+@bot.message_handler(
     func=lambda message: message.text == "📢 Reklama"
     and message.from_user.id == ADMIN_ID
 )
@@ -338,6 +404,13 @@ def handle_all_messages(message):
   user_id = message.from_user.id
   text = message.text if message.text else ""
 
+  # Kanal ulangan bo'lsa va oddiy foydalanuvchi bo'lsa obunani tekshiramiz
+  if not check_channel_sub(user_id) and user_id != ADMIN_ID:
+    bot.send_message(
+        message.chat.id, "⚠️ Avval kanalimizga a'zo bo'ling va /start bosing!"
+    )
+    return
+
   if user_id == ADMIN_ID and user_id in user_states and user_states[user_id]:
     state = user_states[user_id]
     step = state.get("step")
@@ -350,6 +423,17 @@ def handle_all_messages(message):
       )
       conn.commit()
       bot.send_message(message.chat.id, f"✅ Karta raqami saqlandi: {text} ✅")
+      user_states[user_id] = {}
+      return
+
+    elif step == "waiting_channel":
+      cursor.execute(
+          "INSERT OR REPLACE INTO settings (key, value) VALUES ('required_channel',"
+          " ?)",
+          (text,),
+      )
+      conn.commit()
+      bot.send_message(message.chat.id, f"✅ Kanal muvaffaqiyatli ulandi: {text}")
       user_states[user_id] = {}
       return
 
@@ -529,3 +613,4 @@ def callback_episode(call):
 # --- ISHGA TUSHIRISH ---
 print("VIP Biznes Kino Bot muvaffaqiyatli ishga tushdi...")
 bot.infinity_polling()
+      
